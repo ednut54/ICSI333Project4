@@ -2,7 +2,7 @@
  * Fall 2019
  * Monday 10:25am
  * Habib Affinnih and Mike Guistiniani
- * 001361565,  
+ * 001361565, 001408543
  *
  * This program models the game Battleship.
  */
