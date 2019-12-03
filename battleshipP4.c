@@ -34,6 +34,7 @@ struct move{
     char state[20];
     char ship[20];
     int player;
+    int win;
     struct move *next;
 };
 
@@ -140,9 +141,6 @@ void createSendingSocket() {
     inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr), s, sizeof s);
     printf("client: connecting to %s\n", s);
     freeaddrinfo(servinfo); // all done with this structure
-
-    //Make the socket non-blocking
-    //fcntl(ourSocket, F_SETFL, O_NONBLOCK);
 }
 
 
@@ -226,9 +224,6 @@ void createListenSocket() {
     close(listenSocket);
 
     listenSocket = new_fd;
-
-    //Make the socket non-blocking
-    //fcntl(listenSocket, F_SETFL, O_NONBLOCK);
 }
 
 
@@ -288,7 +283,7 @@ void update_state(char* state, char ** board, struct move** head,struct move** t
     if(board[row][col] == '-'){
         strcpy(state, "MISS");
         strcpy((*temp)->state, "MISS");
-        strcpy((*temp)->ship, "  ");
+        strcpy((*temp)->ship, "NONE");
         board[row][col]='O';
     }
     else{
@@ -304,19 +299,52 @@ void update_state(char* state, char ** board, struct move** head,struct move** t
         board[row][col]='X';
     }
 
-    insert_move(head,tail,*temp);
     int counter = 0;
     for(i=0; i < SIZE; i++){
         for(j=0; j < SIZE; j++){
-            if(board[i][j] == '-' || board[i][j] == 'X')
+            if(board[i][j] == '-' || board[i][j] == 'X' || board[i][j] == 'O')
                 counter += 1;
         }
     }
     if(counter == SIZE * SIZE)
         strcpy(state, "GAME OVER!");
+
+    insert_move(head,tail,*temp);
 }
 
-struct move* accept_input(){
+void update_our_move_board(char ***ourMoveBoard, struct move *ourMove){
+    int row, i, j;
+    char letter = ourMove->letter;
+    int col = ourMove->number;
+    row = letter % 65;
+
+    if(!strcmp(ourMove->state, "HIT!")){
+        char ship = ourMove->ship[2];
+
+        switch (ship)
+        {
+        case 'u':
+            (*ourMoveBoard)[row][col] = 'C';
+            break;
+        case 'r':
+            (*ourMoveBoard)[row][col] = 'R';
+            break;
+        case 't':
+            (*ourMoveBoard)[row][col] = 'B';
+            break;
+        case 'b':
+            (*ourMoveBoard)[row][col] = 'S';
+            break;
+        case 's':
+            (*ourMoveBoard)[row][col] = 'D';
+            break;
+        }
+        
+    }else
+        (*ourMoveBoard)[row][col] = 'O';
+}
+
+struct move* accept_input(char **ourMoveBoard){
     char letter;
     int number;
     bool flag = true;
@@ -328,12 +356,18 @@ struct move* accept_input(){
             continue;
         }
         letter = toupper(letter);
+
         if(letter == 'Z' && number == 0)
             break;
-        if (letter < 65 || letter > 74)
+        
+        int row = letter % 65;
+
+        if(letter < 65 || letter > 74)
             printf("INVALID INPUT\n");
-        else if (number <0 || number >9)
+        else if(number <0 || number >9)
             printf("INVALID INPUT\n");
+        else if(ourMoveBoard[row][number] != '-')
+            printf("You have already entered this move!\n");
         else
             flag = false;
 	}while(flag);
@@ -342,12 +376,13 @@ struct move* accept_input(){
     temp = (struct move *)malloc(sizeof(struct move));
     temp->letter = letter;
     temp->number = number;
+    temp->win = 0;
     return temp;
 }
 
 void display_state(char* state, char** board, char** ourMoveBoard){
 	int i, j;
-    printf("  **** %s ****             **** Your Ships ****\n", state);
+    printf("  **** Your guesses ****             **** %s ****\n", state);
 
 	printf("  0 1 2 3 4 5 6 7 8 9               0 1 2 3 4 5 6 7 8 9\n");
 	for (i = 0; i < SIZE; i++){
@@ -364,7 +399,7 @@ void display_state(char* state, char** board, char** ourMoveBoard){
 	}
 }
 
-int teardown(char ** board,struct move* head){
+int teardown(char ** board, struct move* head, struct move* tail){
 	int i;
     struct move* temp;
 	for(i = 0; i < SIZE; i++)
@@ -372,25 +407,59 @@ int teardown(char ** board,struct move* head){
 	free(board);
 	FILE *fptr;
 
-    fptr = fopen("log.txt", "w");
-     if (fptr == NULL)
-     {
-         exit(-1);
-     }
+    if(ipAddress[0] == 0)
+        fptr = fopen("server_log.txt", "w");
+    else
+        fptr = fopen("clietn_log.txt", "w");
 
-    
-     if (head==NULL){
-         printf("The list is empty");
-     }
-     else{
-         while (head != NULL){
-            fprintf(fptr, "Fired at %c%d %s %s \n", head->letter, head->number, head->state, head->ship);
+    if (fptr == NULL)
+    {
+        exit(-1);
+    }
+
+
+    if (head==NULL){
+        printf("The list is empty\n");
+        fprintf(fptr, "No moves were made.");
+    }
+    else{
+        while (head != NULL){
+            if(head->player == 1){
+                switch (head->state[0]){
+                    case 'H':
+                        fprintf(fptr, "You fired at %c%d %s %s \n", head->letter, head->number, head->state, head->ship);
+                        break;
+                    
+                    default:
+                        fprintf(fptr, "You fired at %c%d %s \n", head->letter, head->number, head->state);
+                        break;
+                }
+            }else{
+                switch (head->state[0]){
+                    case 'H':
+                        fprintf(fptr, "Your opponent fired at %c%d %s %s \n", head->letter, head->number, head->state, head->ship);
+                        break;
+                    
+                    default:
+                        fprintf(fptr, "Your opponent fired at %c%d %s \n", head->letter, head->number, head->state);
+                        break;
+                }
+            }
             temp = head;
             head = head->next;
             free(temp);
-         }
-     }
-     fclose(fptr);
+        }
+
+        if(tail->win == 1)
+            fprintf(fptr, "You sunk all of your opponent's ships. You won the game!");
+        else
+            fprintf(fptr, "Your opponent sunk all of your ships. You lost the game!");
+    }
+
+
+    fclose(fptr);
+    close(listenSocket);
+    close(ourSocket);
 	return 0;
 }
 
@@ -427,23 +496,22 @@ void main(int argc, char **argv) {
 	board = initialization(&ourMoveBoard);
 
     char buff[20];
-    char ourMoveStateAndShip[40];
-    char theirMoveStateAndShip[40];
+    char ourMoveStateAndShip[40] = {};
+    char theirMoveStateAndShip[40] = {};
 
 	do{
-        //ourMove = accept_input();
-        
         if(ipAddress[0] != 0){
-		    display_state(state, board, ourMoveBoard);
+            //You are the client
+		    
+            display_state(state, board, ourMoveBoard);
+            
             //make move
-		    ourMove = accept_input();
+		    ourMove = accept_input(ourMoveBoard);
             ourMove->player = 1;
             char num[2];
 
             sprintf(num, "%d", ourMove->number);
-            //num = (ourMove->number);
 
-            printf("The number is %s", num);
             buff[0] = ourMove->letter;
             buff[1] = ' ';
             buff[2] = num[0];
@@ -452,69 +520,136 @@ void main(int argc, char **argv) {
             send(ourSocket, buff, sizeof(buff), 0);
             printf("Sent %s\n", buff);
 
+            if(ourMove->letter == 'Z' && ourMove->number == 0){
+                printf("You quit the game.\n");
+                break;
+            }
+            
             //wait for state
             recv(ourSocket, ourMoveStateAndShip, sizeof(ourMoveStateAndShip), 0);
-            printf("Received %s\n", ourMoveStateAndShip);
+            printf("Received %s.\n", ourMoveStateAndShip);
+
             
-            printf("The state was: %s", strtok(ourMoveStateAndShip, " "));
-            printf("The ship hit was: %s", strtok(NULL, " "));
+            if(ourMoveStateAndShip[0] == 'W'){
+                //You sunk all of your opponent's ships
+                strcpy(state, "GAME OVER!");
+                strcpy(ourMoveStateAndShip, ourMoveStateAndShip + 1);
+            }
 
             //store move
-            //strcpy(ourMove->state, strtok(ourMoveStateAndShip, " "));
-            //strcpy(ourMove->ship, strtok(NULL, " "));
+            printf("The string is %s.\n", ourMoveStateAndShip);
+            strcpy(ourMove->state, strtok(ourMoveStateAndShip, " "));
+            printf("The state stored in ourMove is %s.\n", ourMove->state);
+            strcpy(ourMove->ship, strtok(NULL, " "));
+            printf("The ship stored in ourMove is %s.\n", ourMove->ship);
             
-            //insert_move(&head, &tail, ourMove);
+            strcpy(ourMoveStateAndShip, "");
+            
+            //Update our move board
+            update_our_move_board(&ourMoveBoard, ourMove);
+
+            display_state(state, board, ourMoveBoard);
+            
+            if(strcmp(state, flag) == 0){
+                printf("You sunk all of your opponent's ships! You win!\n");
+                ourMove->win = 1;
+                insert_move(&head, &tail, ourMove);
+                break;
+            }
+
+            //Insert the move in the list
+            insert_move(&head, &tail, ourMove);
+
 
             //wait for move
             printf("Waiting for other player to make move...");
             fflush(stdout);
+            
             recv(ourSocket, buff, sizeof(buff), 0);
             printf("Received %s\n", buff);
             theirMove = (struct move *)malloc(sizeof(struct move));
             char letter = buff[0];
             int number = buff[2] - '0';
 
+            if(letter == 'Z' && number == 0){
+                printf("Your opponent quit the game!\n");
+                break;
+            }
+
             theirMove->letter = letter;
             theirMove->number = number;
             theirMove->player = 2;
             update_state(state, board, &head, &tail, &theirMove);
 
+            if(strcmp(state, flag) == 0){
+                //Your opponent sunk all your ships
+                strcpy(theirMoveStateAndShip, "W");
+            }
+
             //send state
-            strcpy(theirMoveStateAndShip, theirMove->state);
+            strcat(theirMoveStateAndShip, theirMove->state);
             strcat(theirMoveStateAndShip, " ");
             strcat(theirMoveStateAndShip, theirMove->ship);
             send(ourSocket, theirMoveStateAndShip, sizeof(theirMoveStateAndShip), 0);
             printf("Sent %s\n", theirMoveStateAndShip);
+
+            strcpy(theirMoveStateAndShip, "");
+
+            if(strcmp(state, flag) == 0){
+		        display_state(state, board, ourMoveBoard);
+                printf("Your opponent sunk all of your ships! You lost!\n");
+            }
         }else{
+            //you are server
             //wait for move
+            display_state(state, board, ourMoveBoard);
+            
             printf("Waiting for other player to make move...");
             fflush(stdout);
+            
+            //Receive move
             recv(listenSocket, buff, sizeof(buff), 0);
             printf("Received %s\n", buff);
+            
             theirMove = (struct move *)malloc(sizeof(struct move));
             char letter = buff[0];
             int number = buff[2] - '0';
 
-            printf("Their move was: %c%d", letter, number);
+            printf("Their move was: %c%d\n", letter, number);
+
+            if(letter == 'Z' && number == 0){
+                printf("Your opponent quit the game!\n");
+                break;
+            }
 
             theirMove->letter = letter;
             theirMove->number = number;
             theirMove->player = 2;
             update_state(state, board, &head, &tail, &theirMove);
             
+            if(strcmp(state, flag) == 0){
+                //Your opponent sunk all your ships
+                strcpy(theirMoveStateAndShip, "W");
+            }
             
             //send state
-            strcpy(theirMoveStateAndShip, theirMove->state);
+            strcat(theirMoveStateAndShip, theirMove->state);
             strcat(theirMoveStateAndShip, " ");
             strcat(theirMoveStateAndShip, theirMove->ship);
             send(listenSocket, theirMoveStateAndShip, sizeof(theirMoveStateAndShip), 0);
             printf("Sent %s\n", theirMoveStateAndShip);
 
-
+            strcpy(theirMoveStateAndShip, "");
 
 		    display_state(state, board, ourMoveBoard);
+
+            if(strcmp(state, flag) == 0){
+                printf("Your opponent sunk all of your ships! You lost!\n");
+                break;
+            }
+
             //make move
-            ourMove = accept_input();
+            ourMove = accept_input(ourMoveBoard);
             ourMove->player = 1;
             char num[2];
             
@@ -528,88 +663,44 @@ void main(int argc, char **argv) {
             send(listenSocket, buff, sizeof(buff), 0);
             printf("Sent %s\n", buff);
 
+            if(ourMove->letter == 'Z' && ourMove->number == 0){
+                printf("You quit the game.\n");
+                break;
+            }
+            
             //wait for state
             recv(listenSocket, ourMoveStateAndShip, sizeof(ourMoveStateAndShip), 0);
-            printf("Received %s\n", ourMoveStateAndShip);
+            printf("Received %s.\n", ourMoveStateAndShip);
             
-            
-            printf("The state was: %s", strtok(ourMoveStateAndShip, " "));
-            printf("The ship hit was: %s", strtok(NULL, " "));
+            if(ourMoveStateAndShip[0] == 'W'){
+                //You sunk all of your opponent's ships
+                strcpy(state, "GAME OVER!");
+                strcpy(ourMoveStateAndShip, ourMoveStateAndShip + 1);
+            }
+
             //store move
-            //strcpy(ourMove->state, strtok(ourMoveStateAndShip, " "));
-            //strcpy(ourMove->ship, strtok(NULL, " "));
-            
-            //insert_move(&head, &tail, ourMove);
-        }
-        
-        
+            printf("The string is %s.\n", ourMoveStateAndShip);
+            strcpy(ourMove->state, strtok(ourMoveStateAndShip, " "));
+            printf("The state stored in ourMove is %s.\n", ourMove->state);
+            strcpy(ourMove->ship, strtok(NULL, " "));
+            printf("The ship stored in ourMove is %s.\n", ourMove->ship);
 
-        
-        
-        
-        
-        /*add code below to send our move to the other player*/
-        
+            strcpy(ourMoveStateAndShip, "");
 
-        /*
-        if (ipAddress[0] != 0){
-            //strcpy(buff, "Test Message");
-            buff[0] = ourMove->letter;
-            buff[1] = toascii(ourMove->number);
-            buff[2] = '\0';
-            //sprintf(buff, "%s%d\0", ourMove->letter, ourMove->number);
-            send(ourSocket, buff, sizeof(buff), 0);
-            printf("Sent %s\n", buff);
-        }else
-        {
-            buff[0] = ourMove->letter;
-            buff[1] = toascii(ourMove->number);
-            buff[2] = '\0';
-            //sprintf(buff, "%s%d\0", ourMove->letter, ourMove->number);
-            send(listenSocket, buff, sizeof(buff), 0);
-            printf("Sent %s\n", buff);
-        }
-        */
-        
-        /*add code to receive the state of our move from the other player*/
-        /*
-        if (ipAddress[0] != 0){
-            while(recv(ourSocket, buff, sizeof(buff), 0) > 0){
-                //recv(listenSocket, buff, sizeof(buff), 0);
-                printf("Received %s\n", buff);
-                memset(buff, 0, sizeof(buff));
+            //Update our move board
+            update_our_move_board(&ourMoveBoard, ourMove);
+
+            if(strcmp(state, flag) == 0){
+                display_state(state, board, ourMoveBoard);
+                printf("You sunk all of your opponent's ships! You win!\n");
+                ourMove->win = 1;
             }
-        }else
-        {
-            while(recv(listenSocket, buff, sizeof(buff), 0) > 0){
-                //recv(listenSocket, buff, sizeof(buff), 0);
-                printf("Received %s\n", buff);
-                memset(buff, 0, sizeof(buff));
-            }
+
+            //Insert the move in the list
+            insert_move(&head, &tail, ourMove);
         }
-        */
-        /*add code to store our moves (letter, number, and result) into linked list*/
-
-		//struct move theirMove;
-        /*add code below to receive theirMove from the other player*/
-        
-        /*
-        if (ipAddress[0] != 0){
-            //strcpy(buff, "Test Message");
-            buff[0] = ourMove->letter;
-            buff[1] = toascii(ourMove->number);
-            buff[2] = '\0';
-            send(ourSocket, buff, sizeof(buff), 0);
-            printf("Sent %s", buff);
-        }
-        */
-
-        /*modify the update_state function to check theirMove is HIT or MISS
-         * and send the state back to the other player */
-        //Check their move
-
-
 	} while(strcmp(state, flag));
-	teardown(board, head);
+
+	teardown(board, head, tail);
 	exit(0);
 }
